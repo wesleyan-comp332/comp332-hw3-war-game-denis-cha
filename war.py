@@ -18,7 +18,7 @@ up being faster. It would be a good idea to keep objects in each of these
 for each game which contain the game's state, for instance things like the
 socket, the cards given, the cards still available, etc.
 """
-Game = namedtuple("Game", ["p1", "p2"])
+Game = namedtuple("Game", ["p1", "p2", "hand1", "hand2", "cards_played", "socket1", "socket2"])
 
 # Stores the clients waiting to get connected to other clients
 waiting_clients = []
@@ -48,31 +48,51 @@ def readexactly(sock, numbytes):
     before numbytes have been received, be sure to account for that here or in
     the caller.
     """
-    # TODO
-    pass
+    data = b''
+    while len(data) < numbytes:
+        data_chunk = sock.recv(numbytes - len(data))
+        if not data_chunk:
+            raise EOFError(f"Only recieved {len(data)} bytes out of {numbytes} bytes before reaching EOF")
+        data += data_chunk
+    return data
 
 
 def kill_game(game):
     """
-    TODO: If either client sends a bad message, immediately nuke the game.
+    If either client sends a bad message, immediately nuke the game.
     """
-    pass
+    try:
+        game.socket1.close()
+    except(Exception):
+        pass
 
+    try:
+        game.socket2.close()
+    except(Exception):
+        pass
 
 def compare_cards(card1, card2):
     """
-    TODO: Given an integer card representation, return -1 for card1 < card2,
+    Given an integer card representation, return -1 for card1 < card2,
     0 for card1 = card2, and 1 for card1 > card2
     """
-    pass
+    c1 = (card1 - 2 ) % 13
+    c2 = (card2 - 2) % 13
+    if (c1 > c2):
+        return 1
+    elif (c1 < c2):
+        return -1
+    return 0
     
-
 def deal_cards():
     """
-    TODO: Randomize a deck of cards (list of ints 0..51), and return two
+    Randomize a deck of cards (list of ints 0..51), and return two
     26 card "hands."
     """
-    pass
+    card_deck = list(range(52))
+
+    random.shuffle(card_deck)
+    return card_deck[:26], card_deck[26:]
     
 
 def serve_game(host, port):
@@ -81,7 +101,86 @@ def serve_game(host, port):
     perform the war protocol to serve a game of war between each client.
     This function should run forever, continually serving clients.
     """
-    pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind((host, port))
+    except (socket.error, socket.gaierror, socket.timeout, socket.herror):
+        return
+    s.listen()
+
+    while True:
+        new_client, _ = s.accept()
+
+        try:
+            initial_msg = int.from_bytes(readexactly(new_client, 1), byteorder='big')
+            if initial_msg != Command.WANTGAME:
+                raise Exception("Invalid Initial message")
+            waiting_clients.append(new_client)
+        except:
+            new_client.close()
+
+        while len(waiting_clients) >= 2:
+            client1 = waiting_clients.pop(0)
+            client2 = waiting_clients.pop(0)
+            #initiliaze game
+            h1, h2 = deal_cards()
+
+            game = Game(
+                p1="player_1",
+                p2="player_2",
+                hand1= h1,
+                hand2= h2,
+                cards_played=[],
+                socket1=client1,
+                socket2=client2,
+                game_not_over = True
+            )
+
+           
+            game.socket1.sendall(Command.GAMESTART.to_bytes(1, byteorder ='big') + str(game.hand1).encode())
+            game.socket2.sendall(Command.GAMESTART.to_bytes(1, byteorder ='big') + str(game.hand2).encode())
+            while game.game_not_over:
+                try:
+                    msg1 = int.from_bytes(readexactly(game.socket1, 2), byteorder='big')
+                    msg2 = int.from_bytes(readexactly(game.socket2, 2), byteorder='big')
+                    comm1 = int.from_bytes(msg1[0], byteorder='big')
+                    comm2 = int.from_bytes(msg2[0], byteorder='big')
+                    card1 = msg1[1]
+                    card2 = msg2[1]
+                    if comm1 != Command.PLAYCARD or comm2 != Command.PLAYCARD:
+                        raise Exception ("Message isn't a PLAYCARD Command")
+
+                    if card1 in game.cards_played or card2 in game.cards_played:
+                        raise Exception("Replayed a card")
+                    elif card1 not in range(0, 51) or card2 not in range(0, 51):
+                        raise Exception(" Card number out of range")
+                    else:
+                        game.cards_played.append(card1)
+                        game.cards_played.append(card2)
+                    result = compare_cards(card1, card2)
+                    if result == 1:
+                        game.socket1.sendall(Command.PLAYRESULT.to_bytes(1, byteorder= 'b') + Result.WIN.to_bytes(1, byteorder='big'))
+                        game.socket2.sendall(Command.PLAYRESULT.to_bytes(1, byteorder= 'b') + Result.LOSE.to_bytes(1, byteorder='big'))
+                    elif result == -1:
+                        game.socket2.sendall(Command.PLAYRESULT.to_bytes(1, byteorder= 'b') + Result.WIN.to_bytes(1, byteorder='big'))
+                        game.socket1.sendall(Command.PLAYRESULT.to_bytes(1, byteorder= 'b') + Result.LOSE.to_bytes(1, byteorder='big'))
+                    else:
+                        game.socket1.sendall(Command.PLAYRESULT.to_bytes(1, byteorder= 'b') + Result.DRAW.to_bytes(1, byteorder='big'))
+                        game.socket2.sendall(Command.PLAYRESULT.to_bytes(1, byteorder= 'b') + Result.DRAW.to_bytes(1, byteorder='big'))
+
+                    if len(game.cards_played) >= 52:
+                        game = game._replace(game_not_over = False)
+
+
+                except Exception as e:
+                    print(f"Exception during the game: {e}")
+                    kill_game(game)
+                    game = game._replace(game_not_over = False)
+
+                
+
+
+
     
 
 async def limit_client(host, port, loop, sem):
