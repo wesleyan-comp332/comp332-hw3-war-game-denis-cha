@@ -1,0 +1,10 @@
+1: Two clients rarely complete a successful game with the server.
+The server is not able to establish a connection to any client
+Getting the following error
+DEBUG:asyncio:Using selector: EpollSelector
+ERROR:root:ConnectionResetError
+
+Code does not handles two clients 
+
+Total points: 60
+
